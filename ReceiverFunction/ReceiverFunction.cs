@@ -19,7 +19,7 @@ namespace ThroughputTestFunction
         {
             log.LogInformation("C# HTTP trigger function processed a request.");
 
-            string eventNumber = req.Query["eventNumber"];
+            string eventNumber = req.Query["actionId"];
             string eventTime;
 
 
