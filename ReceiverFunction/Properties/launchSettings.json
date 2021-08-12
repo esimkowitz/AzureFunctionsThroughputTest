@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "ReceiverFunction": {
+      "commandName": "Project"
+    },
+    "Docker": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "httpPort": 32664,
+      "useSSL": false
+    }
+  }
+}

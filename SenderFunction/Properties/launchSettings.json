@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "SenderFunction": {
+      "commandName": "Project"
+    },
+    "Docker": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "httpPort": 30844,
+      "useSSL": false
+    }
+  }
+}

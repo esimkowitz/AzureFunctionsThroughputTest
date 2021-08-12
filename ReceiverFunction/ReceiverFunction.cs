@@ -20,12 +20,10 @@ namespace ThroughputTestFunction
             log.LogInformation("C# HTTP trigger function processed a request.");
 
             string eventNumber = req.Query["actionId"];
-            string eventTime;
-
 
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
             dynamic data = JsonConvert.DeserializeObject(requestBody);
-            eventTime = data?.eventTime;
+            string eventTime = data?.eventTime;
 
             string response = $"eventNumber: {eventNumber}; eventTime: {eventTime}";
             log.LogInformation(response);

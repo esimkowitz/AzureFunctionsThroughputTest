@@ -3,8 +3,12 @@
     "appInsights1": {
       "type": "appInsights.sdk"
     },
+    "secrets1": {
+      "type": "secrets.user"
+    },
     "storage1": {
-      "type": "storage.emulator",
+      "resourceId": "/subscriptions/[parameters('subscriptionId')]/resourceGroups/[parameters('resourceGroupName')]/providers/Microsoft.Storage/storageAccounts/senderfunctionstorage",
+      "type": "storage.azure",
       "connectionId": "AzureWebJobsStorage"
     }
   }

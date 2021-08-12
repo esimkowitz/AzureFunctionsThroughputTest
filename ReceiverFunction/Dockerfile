@@ -7,14 +7,14 @@ EXPOSE 80
 FROM mcr.microsoft.com/dotnet/sdk:3.1 AS build
 WORKDIR /src
 COPY ["nuget.config", "."]
-COPY ["SenderFunction/SenderFunction.csproj", "SenderFunction/"]
-RUN dotnet restore "SenderFunction/SenderFunction.csproj"
+COPY ["ReceiverFunction/ReceiverFunction.csproj", "ReceiverFunction/"]
+RUN dotnet restore "ReceiverFunction/ReceiverFunction.csproj"
 COPY . .
-WORKDIR "/src/SenderFunction"
-RUN dotnet build "SenderFunction.csproj" -c Release -o /app/build
+WORKDIR "/src/ReceiverFunction"
+RUN dotnet build "ReceiverFunction.csproj" -c Release -o /app/build
 
 FROM build AS publish
-RUN dotnet publish "SenderFunction.csproj" -c Release -o /app/publish
+RUN dotnet publish "ReceiverFunction.csproj" -c Release -o /app/publish
 
 FROM base AS final
 WORKDIR /home/site/wwwroot
