@@ -7,17 +7,21 @@ using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using System.Net.Http;
+using System.Net;
+using System.Text;
 
 namespace ThroughputTestFunction
 {
     public static class ReceiverFunction
     {
         [FunctionName("ReceiverFunction")]
-        public static async Task<IActionResult> Run(
+        public static async Task<HttpResponseMessage> Run(
             [HttpTrigger(AuthorizationLevel.Function, "post", Route = null)] HttpRequest req,
             ILogger log)
         {
             log.LogInformation("C# HTTP trigger function processed a request.");
+            log.LogInformation($"queryString: {req.QueryString}");
 
             string eventNumber = req.Query["actionId"];
 
@@ -28,7 +32,10 @@ namespace ThroughputTestFunction
             string response = $"eventNumber: {eventNumber}; eventTime: {eventTime}";
             log.LogInformation(response);
 
-            return new OkObjectResult($"Success: {response}");
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(response, Encoding.UTF8)
+            };
         }
     }
 }
