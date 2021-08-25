@@ -321,15 +321,14 @@ namespace SenderFunction
 
             var executionStatus = new EntityId(nameof(ExecutionStatus), $"ExecutionStatus_{instanceId}");
 
-            try
+            var entityState = await client.ReadEntityStateAsync<ExecutionStatus>(executionStatus);
+            if (!entityState.EntityExists || entityState.EntityState.IsStopped)
             {
-                await client.SignalEntityAsync(executionStatus, "Stop");
-                return new OkResult();
+                return new NotFoundObjectResult($"No instance with id \"{instanceId}\" is currently running");
             }
-            catch
-            {
-                return new NotFoundObjectResult($"Unable to locate entity \"ExecutionStatus_{instanceId}\"");
-            }
+
+            await client.SignalEntityAsync(executionStatus, "Stop");
+            return new OkResult();
         }
 
     }
