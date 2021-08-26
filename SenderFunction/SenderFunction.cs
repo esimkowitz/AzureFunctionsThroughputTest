@@ -53,16 +53,20 @@ namespace SenderFunction
             public Uri TargetUri;
             public string FunctionCode;
             public string WorkerId;
+            public int WorkerIdInt;
+            public int NumWorkers;
             public int NumEvents;
             public int NumRuns;
             public TimeSpan Interval;
             public DateTime QueueTime;
 
-            public WorkerSubOrchestratorInput(Uri targetUri, string functionCode, string instanceId, int workerId, int numEvents, int numRuns, TimeSpan interval, DateTime queueTime)
+            public WorkerSubOrchestratorInput(Uri targetUri, string functionCode, string instanceId, int workerId, int numWorkers, int numEvents, int numRuns, TimeSpan interval, DateTime queueTime)
             {
                 TargetUri = targetUri;
                 FunctionCode = functionCode;
                 WorkerId = $"{instanceId.Substring(0, 5)}_{workerId}";
+                WorkerIdInt = workerId;
+                NumWorkers = numWorkers;
                 NumRuns = numRuns;
                 NumEvents = numEvents;
                 Interval = interval;
@@ -77,14 +81,16 @@ namespace SenderFunction
             public string WorkerId;
             public int NumEvents;
             public int MaxDelayMs;
+            public TimeSpan Interval;
             public DateTime QueueTime;
 
-            public WorkerInput(Uri targetUri, string functionCode, string workerId, int runId, int numEvents, int maxDelayMs, DateTime queueTime) {
+            public WorkerInput(Uri targetUri, string functionCode, string workerId, int runId, int numEvents, int maxDelayMs, TimeSpan interval, DateTime queueTime) {
                 TargetUri = targetUri;
                 FunctionCode = functionCode;
                 WorkerId = $"{workerId}_{runId}";
                 NumEvents = numEvents;
                 MaxDelayMs = maxDelayMs;
+                Interval = interval;
                 QueueTime = queueTime;
             }
         }
@@ -105,7 +111,9 @@ namespace SenderFunction
             ILogger log)
         {
             var input = context.GetInput<OrchestratorInput>(); 
-            log.LogInformation($"SenderFunction: Starting run {context.InstanceId}, input {input}");
+            log.LogInformation($"SenderFunction: Starting {context.InstanceId}, input {input}");
+
+            string trimmedInstanceId = context.InstanceId.Remove(0, context.InstanceId.IndexOf('_')+1);
 
             var queryStringParams = input.TargetUri.ParseQueryString();
             Uri targetUriMinusQuery = new Uri(input.TargetUri.GetLeftPart(UriPartial.Path));
@@ -127,12 +135,13 @@ namespace SenderFunction
                     new WorkerSubOrchestratorInput(
                         targetUriMinusQuery,
                         functionCode,
-                        context.InstanceId,
+                        trimmedInstanceId,
                         workerId,
+                        numWorkers,
                         input.NumEventsPerWorker,
                         input.NumRuns,
                         input.Interval,
-                        context.CurrentUtcDateTime));
+                        context.CurrentUtcDateTime)); ;
             }
 
             context.SetCustomStatus("SubOrchestrations are running");
@@ -161,13 +170,28 @@ namespace SenderFunction
 
             var outputs = new List<string>();
             int maxDelayMs = (int)input.Interval.TotalMilliseconds - 2000;
+            var offsetTicks = (long)(input.Interval.Ticks * (input.WorkerIdInt / (double)input.NumWorkers));
+            var offsetTimeSpan = TimeSpan.FromTicks(offsetTicks);
+            log.LogInformation($"SenderFunction_Worker_SubOrchestrator offset: {offsetTimeSpan.TotalMilliseconds}");
+
+            // Delay initial start of execution to provide some jitter to the calls
+            
+            //int delayAmount = await context.CallActivityAsync<int>("SenderFunction_RandomNumber", (int)input.Interval.TotalMilliseconds);
+            //DateTime deadline = context.CurrentUtcDateTime.Add(TimeSpan.FromMilliseconds(delayAmount));
+            //log.LogInformation($"SenderFunction_Worker_SubOrchestrator {input.WorkerId} delay amount: {delayAmount}, deadline: {deadline}");
+            //Task timeout = context.CreateTimer(deadline, CancellationToken.None);
+            //await timeout;
 
             var executionStatus = new EntityId(nameof(ExecutionStatus), $"ExecutionStatus_{context.ParentInstanceId}");
 
             for (int runId = 0; runId < input.NumRuns; runId++)
             {
-                DateTime deadline = context.CurrentUtcDateTime.Add(input.Interval);
-                Task timeout = context.CreateTimer(deadline, CancellationToken.None);
+                var deadlineTicks = context.CurrentUtcDateTime.Ticks;
+                var delayTicks = (deadlineTicks % input.Interval.Ticks) + offsetTicks + input.Interval.Ticks;
+                log.LogInformation($"SenderFunction_Worker_SubOrchestrator {input.WorkerId} run {runId} delay {TimeSpan.FromTicks(delayTicks).TotalMilliseconds}");
+                var deadline = new DateTime(deadlineTicks + delayTicks);
+                //var deadline = context.CurrentUtcDateTime.Add(input.Interval);
+                var timeout = context.CreateTimer(deadline, CancellationToken.None);
 
                 var runOutput = context.CallActivityAsync<string>(
                         "SenderFunction_Worker",
@@ -178,6 +202,7 @@ namespace SenderFunction
                             runId,
                             input.NumEvents,
                             maxDelayMs,
+                            input.Interval,
                             context.CurrentUtcDateTime));
 
                 await Task.WhenAll(runOutput, timeout);
@@ -213,12 +238,15 @@ namespace SenderFunction
             log.LogInformation($"{input.WorkerId} starting run");
 
             var parallelInputs = Enumerable.Range(0, input.NumEvents);
+            var numEventsDouble = (double)input.NumEvents;
+            var cts = new CancellationTokenSource();
+            cts.CancelAfter(input.Interval);
 
             SynchronizationContext.SetSynchronizationContext(new SynchronizationContext());
 
             await parallelInputs.AsyncParallelForEach(async (int eventId) =>
             {
-                await Task.Delay(random.Next(0, input.MaxDelayMs));
+                await Task.Delay((int)(input.MaxDelayMs * (eventId / numEventsDouble)));
                 //log.LogInformation($"{workerRunId} starting event {eventId}");
                 Stopwatch stopwatch = new Stopwatch();
                 stopwatch.Start();
@@ -229,7 +257,7 @@ namespace SenderFunction
 
                 try
                 {
-                    var response = await httpClient.PostAsync(input.TargetUri + newQueryString.ToUriComponent(), requestContent);
+                    var response = await httpClient.PostAsync(input.TargetUri + newQueryString.ToUriComponent(), requestContent, cts.Token);
                     response.EnsureSuccessStatusCode();
                     this.telemetryClient.GetMetric("SenderFunctionPostSuccess").TrackValue(1);
                     //log.LogInformation($"{activityId} POST call succeeded with response \"{responseStr}\"");
@@ -253,6 +281,13 @@ namespace SenderFunction
             }
             
             return response;
+        }
+
+        [FunctionName("SenderFunction_RandomNumber")]
+        public int RunRandomNumber([ActivityTrigger] IDurableActivityContext context, ILogger log)
+        {
+            int maxNumber = context.GetInput<int>();
+            return random.Next(0, maxNumber);
         }
 
         [FunctionName("SenderFunction_Start")]
@@ -292,7 +327,7 @@ namespace SenderFunction
             // Function input comes from the request content.
             string instanceId = await starter.StartNewAsync(
                 "SenderFunction",
-                null,
+                $"SenderFunction_{Guid.NewGuid().ToString().Replace("-", string.Empty)}",
                 new OrchestratorInput(
                     targetUri,
                     numEvents,
@@ -331,6 +366,42 @@ namespace SenderFunction
             return new OkResult();
         }
 
+        [FunctionName("SenderFunction_RunningInstances")]
+        public static async Task<IActionResult> HttpRunningInstancesQueryAsync(
+            [HttpTrigger(AuthorizationLevel.Anonymous, "get")] HttpRequest req,
+            [DurableClient] IDurableOrchestrationClient client,
+            ILogger log)
+        {
+            log.LogInformation("SenderFunction_RunningInstances called");
+            var conditions = new OrchestrationStatusQueryCondition()
+            {
+                RuntimeStatus = new OrchestrationRuntimeStatus[] {
+                    OrchestrationRuntimeStatus.Running,
+                    OrchestrationRuntimeStatus.Pending
+                },
+                InstanceIdPrefix = "SenderFunction_",
+                PageSize = 10
+            };
+
+            var orchestrationStates = new List<DurableOrchestrationStatus>();
+            var queryResult = await client.GetStatusAsync(conditions, req.HttpContext.RequestAborted);
+            orchestrationStates.AddRange(queryResult.DurableOrchestrationState);
+
+            // to account for paging
+            //while (!req.HttpContext.RequestAborted.IsCancellationRequested && !string.IsNullOrEmpty(queryResult.ContinuationToken))
+            //{
+            //    var continuationCondition = new OrchestrationStatusQueryCondition()
+            //    {
+            //        ContinuationToken = queryResult.ContinuationToken
+            //    };
+
+            //    queryResult = await client.GetStatusAsync(continuationCondition, req.HttpContext.RequestAborted);
+
+            //    orchestrationStates.AddRange(queryResult.DurableOrchestrationState);
+            //}
+
+            return new OkObjectResult(orchestrationStates);
+        }
     }
 
     [JsonObject(MemberSerialization.OptIn)]
